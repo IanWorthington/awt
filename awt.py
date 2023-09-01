@@ -17,7 +17,7 @@ import re
 import pickle
 import lz4.frame
 
-debug = True
+debug = False
 
 
 def FindDataFiles():
@@ -31,7 +31,7 @@ def FindDataFiles():
         for file in files:
             if file.endswith(".csv"):
                 fileList.append(os.path.join(root, file))
-    print(fileList)
+    if debug: print(fileList)
 
     return fileList
 
@@ -47,16 +47,16 @@ def LoadData():
             allData = pickle.load(f)
 
     else:
-        print( "Loading data, please wait..." )
+        if debug: print( "Loading data, please wait..." )
 
         fileList = FindDataFiles()
 
         allData = None 
 
         for file in fileList:
-            print( file )
+            if debug: print( file )
             data = ProcessDataFile(file)
-            print(data)
+            if debug: print(data)
 
     #        if isinstance(allData, pd.DataFrame):
     #            allData = data
@@ -64,7 +64,7 @@ def LoadData():
             allData = pd.concat([allData, data])
 
 
-        print( "Saving data..." )
+        if debug: print( "Saving data..." )
         # Open a file to write bytes
         # p_file = open('awtdata.pkl', 'wb')
 
@@ -94,11 +94,11 @@ def LoadData():
 
 def ProcessDataFile(file):
     data = pd.read_csv(file, header = [0,1,2,3])
-    print(data)
+    if debug: print(data)
 
     data = data[["Airport", "Terminal", "Date", "Hour", "Unnamed: 5_level_0", "Unnamed: 7_level_0"]]
     data.columns = ["Airport", "Terminal", "Date", "Time Range", "US Max Wait", "Non US Max Wait"] 
-    print( data ) 
+    if debug: print( data ) 
 
     data['Time'] =  [re.search(r'\d+', x).group() for x in data['Time Range']]
     data['Datetime'] =  data['Date'] + " " + data['Time']
@@ -113,7 +113,7 @@ def ProcessDataFile(file):
 st.set_page_config(page_title="Airport Wait Times", page_icon=":passport_control:", layout="wide")
 
 data = LoadData()
-print( data )
+if debug: print( data )
 
 # TimeRangeChoices = (data["Time Range"].unique())
 # TimeRangeChoices.sort()
@@ -129,8 +129,8 @@ print( data )
 
 # ---- HEADER SECTION ----
 with st.container():
-    st.subheader("US CBP Airport Wait Times :passport_control:")
-    st.title("Waiting times (minutes)")
+    st.subheader(":passport_control: US CBP Airport Wait Times")
+    st.title("Maximum waiting times to clear immigration (minutes)")
 
 
 st.sidebar.markdown("### Choose:")  
@@ -142,7 +142,7 @@ AirportChoices.sort()
 
 airportSelected = st.sidebar.selectbox( "Airport", 
                                        AirportChoices,
-                                       on_change= lambda: {print("> airport changed")} 
+                                       on_change= lambda: {print("> airport changed") if debug else None} 
                                        )
 st.write( "Airport:", airportSelected )
 airportData = data[data['Airport'] == airportSelected]
@@ -154,7 +154,7 @@ TerminalChoices.sort()
 
 terminalSelected = st.sidebar.selectbox( "Terminal", 
                                         TerminalChoices,
-                                        on_change= lambda: {print("> terminal changed")}  
+                                        on_change= lambda: {print("> terminal changed") if debug else None}  
                                         )
 st.write( "Terminal:", terminalSelected )
 terminalData = airportData[airportData['Terminal'] == terminalSelected]
@@ -163,7 +163,7 @@ terminalData = airportData[airportData['Terminal'] == terminalSelected]
 
 yearChoices = terminalData["Year"].unique()
 yearChoices.sort()
-print( yearChoices )
+if debug: print( yearChoices )
 yearChoices = yearChoices.astype(str)
 yearChoicesDf = pd.DataFrame(
     {
@@ -171,7 +171,7 @@ yearChoicesDf = pd.DataFrame(
         "Select": [False]*len(yearChoices)
     }
 )
-print( yearChoicesDf )
+if debug: print( yearChoicesDf )
 
 yearChoicesDf = st.sidebar.data_editor(
     yearChoicesDf,
@@ -184,15 +184,16 @@ yearChoicesDf = st.sidebar.data_editor(
     },
     disabled=["Year"],
     hide_index=True,
-    on_change= lambda: {print("> yearChoices changed")}
+    on_change= lambda: {print("> yearChoices changed") if debug else None}
 )
 
-print( "yearChoicesDf:" )
-print( yearChoicesDf )
+if debug: 
+    print( "yearChoicesDf:" )
+    print( yearChoicesDf )
 
 yearChoicesDf = yearChoicesDf[yearChoicesDf['Select'] == True]
 yearsSelected =  list(yearChoicesDf["Year"])
-print( "yearsSelected:", yearsSelected )
+if debug: print( "yearsSelected:", yearsSelected )
 
 yearsSelectedString = ""
 for y in yearsSelected:
@@ -205,8 +206,9 @@ yearsSelected = [int(i) for i in yearsSelected]
 
 yearsData = terminalData[terminalData['Year'].isin(yearsSelected)]   # df[df['A'].isin([3, 6])]
 
-print( "yearsData:" )
-print( yearsData )
+if debug: 
+    print( "yearsData:" )
+    print( yearsData )
 
 # --- select months
 
@@ -219,7 +221,7 @@ if not yearsData.empty:
             "Select": [False]*len(monthChoices)
         }
     )
-    print( monthChoicesDf )
+    if debug: print( monthChoicesDf )
 
     monthChoicesDf = st.sidebar.data_editor(
         monthChoicesDf,
@@ -232,14 +234,14 @@ if not yearsData.empty:
         },
         disabled=["Month"],
         hide_index=True,
-        on_change= lambda: {print("> monthChoices changed")}
+        on_change= lambda: {print("> monthChoices changed") if debug else None}
     )
 
-    print( monthChoicesDf )
+    if debug: print( monthChoicesDf )
 
     monthChoicesDf = monthChoicesDf[monthChoicesDf['Select'] == True]
     monthsSelected =  list(monthChoicesDf["Month"])
-    print( monthsSelected )
+    if debug: print( monthsSelected )
 
     monthsSelectedString = ""
     for y in monthsSelected:
@@ -250,7 +252,7 @@ if not yearsData.empty:
     monthsData = yearsData[yearsData['Month'].isin(monthsSelected)]    
 
 
-    print( monthsData )
+    if debug: print( monthsData )
 
 # select weekday
 
@@ -263,7 +265,7 @@ if 'monthsData' in locals() and not monthsData.empty:
             "Select": [False]*len(dayChoices)
         }
     )
-    print( dayChoicesDf )
+    if debug: print( dayChoicesDf )
 
     dayChoicesDf = st.sidebar.data_editor(
         dayChoicesDf,
@@ -276,14 +278,14 @@ if 'monthsData' in locals() and not monthsData.empty:
         },
         disabled=["Weekday"],
         hide_index=True,
-        on_change= lambda: {print("> dayChoices changed")}
+        on_change= lambda: {print("> dayChoices changed") if debug else None}
     )
 
-    print( dayChoicesDf )
+    if debug: print( dayChoicesDf )
 
     dayChoicesDf = dayChoicesDf[dayChoicesDf['Select'] == True]
     daysSelected =  list(dayChoicesDf["Weekday"])
-    print( daysSelected )
+    if debug: print( daysSelected )
 
     daysSelectedString = ""
     for y in daysSelected:
@@ -293,14 +295,14 @@ if 'monthsData' in locals() and not monthsData.empty:
 
     weekdaysData = monthsData[monthsData['Weekday'].isin(daysSelected)]    
 
-    print( weekdaysData )
+    if debug: print( weekdaysData )
 
 # select time
 
 if 'weekdaysData' in locals() and not weekdaysData.empty:
     timeChoices = weekdaysData["Time Range"].unique()
     timeChoices.sort()
-    print( timeChoices ) 
+    if debug: print( timeChoices ) 
 
     timeChoicesDf = pd.DataFrame(
         {
@@ -308,7 +310,7 @@ if 'weekdaysData' in locals() and not weekdaysData.empty:
             "Select": [False]*len(timeChoices)
         }
     )
-    print( timeChoicesDf )
+    if debug: print( timeChoicesDf )
 
     timeChoicesDf = st.sidebar.data_editor(
         timeChoicesDf,
@@ -321,14 +323,14 @@ if 'weekdaysData' in locals() and not weekdaysData.empty:
         },
         disabled=["Time"],
         hide_index=True,
-        on_change= lambda: {print("> timeChoices changed")}
+        on_change= lambda: {print("> timeChoices changed") if debug else None}
     )
 
-    print( timeChoicesDf )
+    if debug: print( timeChoicesDf )
 
     timeChoicesDf = timeChoicesDf[timeChoicesDf['Select'] == True]
     timesSelected =  list(timeChoicesDf["Time"])
-    print( timesSelected )
+    if debug: print( timesSelected )
 
     timesSelectedString = ""
     for y in timesSelected:
@@ -338,7 +340,7 @@ if 'weekdaysData' in locals() and not weekdaysData.empty:
 
     timesData = weekdaysData[weekdaysData['Time Range'].isin(timesSelected)]   # df[df['A'].isin([3, 6])]
 
-    print( timesData )
+    if debug: print( timesData )
 
 # Display data
 
@@ -347,12 +349,40 @@ if 'weekdaysData' in locals() and not weekdaysData.empty:
 if 'timesData' in locals() and not timesData.empty:
     ChartData = timesData[["Datetime", "Date", "Time Range", "US Max Wait", "Non US Max Wait"]]
 
+    ChartDataUsSorted = ChartData[["US Max Wait"]]
+    ChartDataUsSorted = ChartDataUsSorted.copy().sort_values(by=['US Max Wait'], ascending=False)
+    ChartDataUsSorted = ChartDataUsSorted.reset_index()
+
+    ChartDataNonUsSorted = ChartData[["Non US Max Wait"]]
+    ChartDataNonUsSorted = ChartDataNonUsSorted.copy().sort_values(by=['Non US Max Wait'], ascending=False)
+    ChartDataNonUsSorted = ChartDataNonUsSorted.reset_index()    
+
+    if debug:
+        print("ChartDataUsSorted")
+        print(ChartDataUsSorted)
+
+    st.bar_chart(
+        ChartDataUsSorted, 
+        #x = 'Datetime',
+        y = 'US Max Wait',
+        #color='#FF0000'
+        )  
+    
+    st.bar_chart(
+        ChartDataNonUsSorted, 
+        #x = 'Datetime',
+        y = 'Non US Max Wait',
+        #color='#0000FF' 
+        )  
+
     st.line_chart(
         ChartData, 
         x = 'Datetime',
-        y = ['US Max Wait', 'Non US Max Wait']
+        y = ['US Max Wait', 'Non US Max Wait'],
+        #color=['#FF0000','#0000FF'] 
         )    
     
     st.dataframe(ChartData, hide_index=True)
 
-st.write( "Data from https://awt.cbp.gov/")    
+st.write( "(C) 2003 Ian Worthington")    
+st.write( "Data from https://awt.cbp.gov/")  
