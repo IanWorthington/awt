@@ -24,7 +24,7 @@ import timeit
 # import blosc
 import time
 
-debug = True
+debug = False
 perf = False
 
 
