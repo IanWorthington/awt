@@ -23,6 +23,12 @@ import lz4.frame
 import timeit
 # import blosc
 import time
+# new requirments:
+import plotly.express as px
+import plotly.graph_objects as go
+# from st_aggrid import AgGrid, GridOptionsBuilder  
+import sys
+import fnmatch
 
 debug = False
 perf = False
@@ -42,6 +48,52 @@ def FindCsvDataFiles():
     if debug: print(fileList)
 
     return fileList
+
+
+def SaveData( allData ):
+    SavedDataFile = 'awtdata.{}.pkl.lzma' # 'awtdata.pkl.lz4'
+
+    years = allData["Year"].unique()
+    years.sort()
+
+    for year in years:
+        print( f"Saving {year}..." )
+
+        yearFn = SavedDataFile.format(year)
+        yearData = allData[allData["Year"] == year]
+
+        with lzma.open(yearFn, "wb") as f:
+            pickle.dump(yearData, f)
+
+    return
+
+
+def FindPickledDataFiles():
+    SavedDataFileMask = 'awtdata.{}.pkl.lzma'.format("*")
+
+    fileList = []
+
+    # os.walk() returns subdirectories, file from current directory and 
+    # And follow next directory from subdirectory list recursively until last directory
+
+    for root, dirs, files in os.walk(r"."):
+        for file in fnmatch.filter(files, SavedDataFileMask):
+            fileList.append(os.path.join(root, file))
+    if debug: print(fileList)
+
+    return fileList
+
+
+def LoadPickledDataFiles(filelist):
+    allData = pd.DataFrame()
+
+    for file in filelist:
+        with lzma.open(file, 'rb') as f:
+            data = pickle.load(f)
+            #allData.append(data)
+            allData = pd.concat([allData, data])
+
+    return allData
 
 
 @st.cache_data  #  Don't reload static data
@@ -85,13 +137,53 @@ def LoadAirports():
 def LoadData():
     if debug: print("Loading data...")
 
-    SavedDataFile = 'awtdata.pkl.lzma' # 'awtdata.pkl.lz4'
+    print( "Checking for CSV data files..." )
 
-    if os.path.isfile(SavedDataFile):
-        # with lz4.frame.open(SavedDataFile, 'rb') as f:
-        #     allData = pickle.load(f)
-        with lzma.open(SavedDataFile, 'rb') as f:
-            allData = pickle.load(f)
+    fileList = FindCsvDataFiles()
+
+    if len(fileList) == 0:
+        print( "No CSV data files found")
+
+    else:
+        print( f"CSV data files found: {fileList}" )
+        
+        allData = None 
+
+        for file in fileList:
+            if debug: print( file )
+            data = PreProcessDataFile(file)
+            if debug: print(data)
+
+            allData = pd.concat([allData, data])
+
+        print( "Postprocessing data..." )
+
+        allData = PostProcessData( allData )
+
+        print( "Postprocessing data complete" )
+
+        allData = allData[["Airport", "Terminal", "Date", "Time Range", "US Max Wait", "Non US Max Wait", "Flights", 
+                           "Time", "Datetime", "Year", "Month", "Weekday", "time50", "time95", "time99"]]
+
+        print( "Saving data..." )
+
+        SaveData( allData )
+
+        print( "Saving complete." )
+
+    # any CSVs now converted.
+    # load picked data
+
+    fileList = FindPickledDataFiles()
+    allData = LoadPickledDataFiles(fileList)
+
+    # SavedDataFile = 'awtdata.pkl.lzma'
+
+    # if os.path.isfile(SavedDataFile):
+    #     # with lz4.frame.open(SavedDataFile, 'rb') as f:
+    #     #     allData = pickle.load(f)
+    #     with lzma.open(SavedDataFile, 'rb') as f:
+    #         allData = pickle.load(f)
 
 
         # #allData.loc[mask, 'flag'] = "**"
@@ -124,34 +216,6 @@ def LoadData():
         # allData.loc[mask, 'Non US Max Wait'] = allData['All Max Wait']
 
         # print( allData )
-
-    else:
-        if debug: 
-            print( "Loading csv data, please wait..." )
-
-        fileList = FindCsvDataFiles()
-
-        allData = None 
-
-        for file in fileList:
-            if debug: print( file )
-            data = PreProcessDataFile(file)
-            if debug: print(data)
-
-            allData = pd.concat([allData, data])
-
-        if debug: print( "Postprocessing data..." )
-
-        allData = PostProcessData( allData )
-
-        if debug: print( "Postprocessing data complete" )
-
-        if debug: print( "Saving data..." )
-
-        with lzma.open(SavedDataFile, "wb") as f:
-            pickle.dump(allData, f)
-
-        if debug: print( "Saving complete." )
 
 
     # # Deserialization of the file
@@ -248,11 +312,12 @@ def PreProcessDataFile(file):
     data = pd.read_csv(file, header = None )  # [0,1,2,3])
     if debug: print(data)
 
-    data = data[[0,1,2,3,5,7,9]]  #[["Airport", "Terminal", "Date", "Hour", "Unnamed: 5_level_0", "Unnamed: 7_level_0"]]
-    data.columns = ["Airport", "Terminal", "Date", "Time Range", "US Max Wait", "Non US Max Wait", "All Max Wait"] 
-    if debug: print( data ) 
-
-    print( data.dtypes )
+    data = data[[0,1,2,3,5,7,9,10,11,12,13,14,15,16,17,18,19]]  #[["Airport", "Terminal", "Date", "Hour", "Unnamed: 5_level_0", "Unnamed: 7_level_0"]]
+    data.columns = ["Airport", "Terminal", "Date", "Time Range", "US Max Wait", "Non US Max Wait", "All Max Wait", "0-15", "16-30", "31-45",
+                    "46-60", "61-90", "91-120", "120+", "Excluded", "Total", "Flights"] 
+    if debug: 
+        print( data ) 
+        print( data.dtypes )
 
     return data
 
@@ -275,9 +340,129 @@ def PostProcessData(data):
     data['Month'] = data['Datetime'].dt.month_name()
     data['Weekday'] = data['Datetime'].dt.day_name()
 
-    data.drop( columns=['All Max Wait'], inplace=True)
+    data = calculatePercentiles(data)
+
+    #data.drop( columns=['All Max Wait'], inplace=True)
 
     return data
+
+
+def calculatePercentiles(df):
+    # df['Processed'] = df['Total'] - df['Excluded']  # Actual numbers in table don't always agree with this!
+    df['Processed'] = df['0-15'] + df['16-30'] + df['31-45'] + df['46-60'] + df['61-90'] + df['91-120'] + df['120+']
+
+    df['Prop0-15']   = df['0-15']    / df['Processed']
+    df['Prop0-30']   = (df['16-30']  / df['Processed']) + df['Prop0-15']
+    df['Prop0-45']   = (df['31-45']  / df['Processed']) + df['Prop0-30']
+    df['Prop0-60']   = (df['46-60']  / df['Processed']) + df['Prop0-45']
+    df['Prop0-90']   = (df['61-90']  / df['Processed']) + df['Prop0-60']
+    df['Prop0-120']  = (df['91-120'] / df['Processed']) + df['Prop0-90']
+    df['Prop0-120+'] = (df['120+']   / df['Processed']) + df['Prop0-120']    
+
+    df['percentiles'] = df.apply(
+        lambda row: findAllPercentiles( 
+            row['Processed'], row['All Max Wait'], row['Prop0-15'], row['Prop0-30'], row['Prop0-45'], row['Prop0-60'], row['Prop0-90'], row['Prop0-120'], row['Prop0-120+']
+            ), 
+        axis=1
+        )
+    
+    df[['time50', 'time95', 'time99']] = df['percentiles'].apply(pd.Series)
+    df.drop(columns='percentiles', inplace=True)
+
+    # dfcheck = df[df['time50'] == None]
+    # print(dfcheck)
+    # dfcheck = df[df['time95'] == None]
+    # print(dfcheck)
+    # dfcheck = df[df['time99'] == None]
+    # print(dfcheck)
+
+    if debug: print( df ) 
+
+    return df
+
+
+def findAllPercentiles( processed, maxWait, prop0_15, prop0_30, prop0_45, prop0_60, prop0_90, prop0_120, prop0_120p ):
+    parms = locals()
+
+    if processed > 0:
+        time50 = findAndInterpolate( percentile=0.5,  **parms)
+        time95 = findAndInterpolate( percentile=0.95, **parms)
+        time99 = findAndInterpolate( percentile=0.99, **parms)
+    else:
+        time50 = None
+        time95 = None
+        time99 = None
+
+    return (time50, time95, time99)
+
+
+def findAndInterpolate( percentile, **kwargs):
+    if debug:
+        print( kwargs )
+
+    if ( (kwargs['prop0_15'] == percentile) ):
+        adjustedTime = 15
+
+    elif ( (kwargs['prop0_30'] == percentile) ):
+        adjustedTime = 30        
+
+    elif ( (kwargs['prop0_45'] == percentile) ):
+        adjustedTime = 45
+
+    elif ( (kwargs['prop0_60'] == percentile) ):
+        adjustedTime = 60        
+
+    elif ( (kwargs['prop0_90'] == percentile) ):
+        adjustedTime = 90  
+
+    elif ( (kwargs['prop0_120'] == percentile) ):
+        adjustedTime = 120        
+
+    elif ( (kwargs['prop0_120p'] == percentile) ):
+        adjustedTime = kwargs['maxWait']
+
+    elif ( (kwargs['prop0_15'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], 0, kwargs['prop0_15'], 0, min(15,kwargs['maxWait']) )
+
+    elif ( (kwargs['prop0_15'] < percentile) & (kwargs['prop0_30'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], kwargs['prop0_15'], kwargs['prop0_30'], 16, min(30,kwargs['maxWait']) - 15 )
+
+    elif ( (kwargs['prop0_30'] < percentile) & (kwargs['prop0_45'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], kwargs['prop0_30'], kwargs['prop0_45'], 31, min(45,kwargs['maxWait']) - 30 )
+
+    elif ( (kwargs['prop0_45'] < percentile) & (kwargs['prop0_60'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], kwargs['prop0_45'], kwargs['prop0_60'], 46, min(60,kwargs['maxWait']) - 45 )   
+
+    elif ( (kwargs['prop0_60'] < percentile) & (kwargs['prop0_90'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], kwargs['prop0_60'], kwargs['prop0_90'], 61, min(90,kwargs['maxWait']) - 60 )
+
+    elif ( (kwargs['prop0_90'] < percentile) & (kwargs['prop0_120'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], kwargs['prop0_90'], kwargs['prop0_120'], 91, min(120,kwargs['maxWait']) - 90 )
+
+    elif ( (kwargs['prop0_120'] < percentile) & (kwargs['prop0_120p'] > percentile) ):
+        adjustedTime = interpolateBin( percentile, kwargs['maxWait'], kwargs['prop0_120'], kwargs['prop0_120p'], 121, kwargs['maxWait'] - 120 )         
+
+    else:
+        print(f"Unexpected condition in findAndInterpolate evaluating percentile {percentile} in {kwargs}")
+        adjustedTime = None
+
+        # sys.exit()        
+
+    return adjustedTime
+
+
+def interpolateBin( percentile, maxWait, propl, proph, timeHstart, interval ):
+    invRate = interval / (proph - propl)
+    additionalMins = (percentile - propl) * invRate
+    time = timeHstart + additionalMins
+    time = min(time, maxWait)  #  due to the way CBP buckets their time bins, the caculated time may occasionally exceed maxWait by up to 1 min.
+    time = round(time)
+
+    if debug: 
+        print( percentile, time )
+
+    return time
+
 
 startMainTime = time.perf_counter()
 if perf: print(f"Starting timing")
@@ -305,7 +490,8 @@ if perf: print(f"Loaded data in {afterLoadTime - startMainTime:0.4f} seconds")
 # ---- HEADER SECTION ----
 with st.container():
     st.subheader(":passport_control: US CBP Airport Wait Times")
-    st.title("Maximum waiting times to clear immigration (minutes)")
+    st.title("Maximum waiting time to clear immigration")
+    st.write(":arrow_left: Select where and when using the sidebar")
 
 
 st.sidebar.markdown("### Choose:")  
@@ -408,11 +594,11 @@ yearChoicesDf = yearChoicesDf[yearChoicesDf['Select'] == True]
 yearsSelected =  list(yearChoicesDf["Year"])
 if debug: print( "yearsSelected:", yearsSelected )
 
-yearsSelectedString = ""
-for y in yearsSelected:
-    yearsSelectedString += y + " "
+# yearsSelectedString = ""
+# for y in yearsSelected:
+#     yearsSelectedString += y + " "
 
-st.write( "Year(s):", yearsSelectedString )
+st.write( "Year(s):", ', '.join(yearsSelected) )
 
 #yearsSelected = yearsSelected.astype(int)
 yearsSelected = [int(i) for i in yearsSelected]
@@ -487,11 +673,11 @@ if not yearsData.empty:
     monthsSelected =  list(monthChoicesDf["Month"])
     if debug: print( monthsSelected )
 
-    monthsSelectedString = ""
-    for y in monthsSelected:
-        monthsSelectedString += y + " "
+    # monthsSelectedString = ""
+    # for y in monthsSelected:
+    #     monthsSelectedString += y + " "
 
-    st.write( "Month(s):", monthsSelectedString )
+    st.write( "Month(s):", ', '.join(monthsSelected) )
 
     monthsData = yearsData[yearsData['Month'].isin(monthsSelected)]    
 
@@ -531,11 +717,11 @@ if 'monthsData' in locals() and not monthsData.empty:
     daysSelected =  list(dayChoicesDf["Weekday"])
     if debug: print( daysSelected )
 
-    daysSelectedString = ""
-    for y in daysSelected:
-        daysSelectedString += y + " "
+    # daysSelectedString = ""
+    # for y in daysSelected:
+    #     daysSelectedString += y + " "
 
-    st.write( "Weekday(s):", daysSelectedString )
+    st.write( "Weekday(s):", ', '.join(daysSelected) )
 
     weekdaysData = monthsData[monthsData['Weekday'].isin(daysSelected)]    
 
@@ -593,8 +779,8 @@ if 'weekdaysData' in locals() and not weekdaysData.empty:
         print( "timesSelected:",  timesSelected )
 
 
-    timesSelectedString = ', '.join(timesSelected)
-    st.write( "Time(s):", timesSelectedString )
+    #timesSelectedString = ', '.join(timesSelected)
+    st.write( "Time(s):", ', '.join(timesSelected) )
 
     if debug: 
         print( "weekdaysData:" )
@@ -610,7 +796,8 @@ if 'weekdaysData' in locals() and not weekdaysData.empty:
 #if not timesData.empty:
 #if isinstance(timesData, pd.DataFrame):    
 if 'timesData' in locals() and not timesData.empty:
-    ChartData = timesData[["Datetime", "Date", "Time Range", "US Max Wait", "Non US Max Wait"]] #, "All Max Wait"]]
+    ChartData = timesData[["Datetime", "Date", "Time Range", "US Max Wait", "Non US Max Wait", "time50", "time95", "time99"]] #, "All Max Wait"]]
+    ChartData["Fdt"] = ChartData["Datetime"].dt.strftime("%a %Y-%b-%d %H%M")
 
     ChartDataUsSorted = ChartData[["US Max Wait"]]
     ChartDataUsSorted = ChartDataUsSorted.copy().sort_values(by=['US Max Wait'], ascending=False)
@@ -628,17 +815,49 @@ if 'timesData' in locals() and not timesData.empty:
         print("ChartDataUsSorted")
         print(ChartDataUsSorted)
 
-    st.bar_chart(
-        ChartDataUsSorted,  
-        y = 'US Max Wait',
-        #color='#FF0000'
-        )  
+    tab_us, tab_nonus = st.tabs(["US", "Non US"])
+
+    with tab_us:
+        # st.bar_chart(
+        #     ChartDataUsSorted,  
+        #     y = 'US Max Wait',
+        #     #color='#FF0000'
+        #     )  
+        
+        fig = px.bar( ChartDataUsSorted, y='US Max Wait' )
+        fig.update_layout( xaxis_title="", yaxis_title="Minutes waiting", legend_title_text='')
+        fig.update_xaxes(visible=False)
+        fig.update_traces(
+            hovertemplate="<br>".join([
+                "%{y} minutes wait"
+            ])
+        )
+
+        st.plotly_chart( fig, 
+                theme="streamlit",
+                use_container_width=True
+                )   
     
-    st.bar_chart(
-        ChartDataNonUsSorted,  
-        y = 'Non US Max Wait',
-        #color='#0000FF' 
-        )  
+    with tab_nonus:
+        # st.bar_chart(
+        #     ChartDataNonUsSorted,  
+        #     y = 'Non US Max Wait',
+        #     #color='#0000FF' 
+        #     )  
+
+        fig = px.bar( ChartDataNonUsSorted, y='Non US Max Wait' )
+        fig.update_layout( xaxis_title="", yaxis_title="Minutes waiting", legend_title_text='')
+        fig.update_xaxes(visible=False)
+        fig.update_traces(
+            hovertemplate="<br>".join([
+                "%{y} minutes wait"
+            ])
+        )
+
+        st.plotly_chart( fig, 
+                theme="streamlit",
+                use_container_width=True
+                )  
     
     # st.bar_chart(
     #     ChartDataAllSorted,  
@@ -646,14 +865,155 @@ if 'timesData' in locals() and not timesData.empty:
     #     #color='#0000FF' 
     #     )  
 
-    st.line_chart(
-        ChartData, 
-        x = 'Datetime',
-        y = ['US Max Wait', 'Non US Max Wait'], # , 'All Max Wait'],
-        #color=['#FF0000','#0000FF'] 
-        )    
+    # st.line_chart(
+    #     ChartData, 
+    #     x = 'Datetime',
+    #     y = ['US Max Wait', 'Non US Max Wait'], # , 'All Max Wait'],
+    #     #color=['#FF0000','#0000FF'] 
+    #     )    
     
-    st.dataframe(ChartData, hide_index=True)
+    ChartData.reset_index(drop=True, inplace=True)
+
+    tab_inorder, tab_bydt = st.tabs(["In order", "By date/time"])
+
+    with tab_inorder:
+        # fig = px.line( ChartData, 
+        #               y=['US Max Wait', 'Non US Max Wait'],
+        #               custom_data=['Datetime'],
+        #               markers=True
+        #               )
+        # # fig.update_layout(legend_title_text='Variable', xaxis_title="X", yaxis_title="Series")
+        # fig.update_layout( xaxis_title="", yaxis_title="Minutes waiting", legend_title_text='')
+        # fig.update_xaxes(visible=False)
+        # fig.update_traces(
+        #     hovertemplate="<br>".join([
+        #         #"ColX: %{x}",
+        #         "%{y} minutes wait",
+        #         "%{customdata[0]}"
+        #     ])
+        # )
+        # st.plotly_chart( fig, 
+        #                 theme="streamlit",
+        #                 use_container_width=True
+        #                 )  
+
+        # customdata = np.stack((df['continent'], df['country']), axis=-1)
+        # customdataStack = np.stack((ChartData['Datetime']), axis=-1)
+
+        fig = go.Figure()
+        fig.add_trace( go.Scatter( y=ChartData["time50"], name="50% All", line=dict(color="#aecfd1"), fillcolor="#aecfd1", fill='tozeroy', customdata=ChartData['Fdt'] )) # fill down to xaxis
+        fig.add_trace( go.Scatter( y=ChartData["time95"], name="95% All", line=dict(color="#bed9da"), fillcolor="#bed9da", fill='tonexty', customdata=ChartData['Fdt'] ))
+        fig.add_trace( go.Scatter( y=ChartData["time99"], name="99% All", line=dict(color="#cee2e3"), fillcolor="#cee2e3", fill='tonexty', customdata=ChartData['Fdt'] ))
+        fig.add_trace( go.Scatter( y=ChartData["US Max Wait"],     name="US Max Wait",     line=dict(color="#dd3737"), customdata=ChartData['Fdt'] )) 
+        fig.add_trace( go.Scatter( y=ChartData["Non US Max Wait"], name="Non US Max Wait", line=dict(color="#6f4c1e"), customdata=ChartData['Fdt'] ))  #customdata=customdataStack )) 
+        fig.update_layout( xaxis_title="", yaxis_title="Minutes waiting", legend_title_text='')
+        fig.update_xaxes(visible=False)
+        fig.update_traces(
+            hovertemplate="<br>".join([
+                #"ColX: %{x}",
+                "%{y} minutes wait",
+                "%{customdata}"
+                # "%{customdata[0]}"
+                ])
+            )
+ 
+        # fig = px.area( ChartData,
+        #             #   x=index,
+        #               y=['time99', 'time95', 'time50']
+        #               )
+        st.plotly_chart( fig, 
+                        theme="streamlit",
+                        use_container_width=True
+                        )   
+
+    with tab_bydt:
+        # fig = px.line( ChartData, 
+        #               x='Datetime', 
+        #               y=['US Max Wait', 'Non US Max Wait'],
+        #               markers=True
+        #               )
+        # fig.update_layout( xaxis_title="Date/time", yaxis_title="Minutes waiting", legend_title_text='')
+        # fig.update_traces(
+        #     hovertemplate="<br>".join([
+        #         "%{x}",
+        #         "%{y} minutes wait"
+        #     ])
+        # )
+        # st.plotly_chart( fig, 
+        #                 theme="streamlit",
+        #                 use_container_width=True
+        #                 )   
+        
+        fig = go.Figure()
+        fig.add_trace( go.Scatter( x=ChartData['Datetime'], y=ChartData["time50"], name="50% All", line=dict(color="#aecfd1"), fillcolor="#aecfd1", fill='tozeroy', customdata=ChartData['Fdt'] )) # fill down to xaxis
+        fig.add_trace( go.Scatter( x=ChartData['Datetime'], y=ChartData["time95"], name="95% All", line=dict(color="#bed9da"), fillcolor="#bed9da", fill='tonexty', customdata=ChartData['Fdt'] ))
+        fig.add_trace( go.Scatter( x=ChartData['Datetime'], y=ChartData["time99"], name="99% All", line=dict(color="#cee2e3"), fillcolor="#cee2e3", fill='tonexty', customdata=ChartData['Fdt'] ))
+        fig.add_trace( go.Scatter( x=ChartData['Datetime'], y=ChartData["US Max Wait"],     name="US Max Wait",     line=dict(color="#dd3737"), customdata=ChartData['Fdt'] )) 
+        fig.add_trace( go.Scatter( x=ChartData['Datetime'], y=ChartData["Non US Max Wait"], name="Non US Max Wait", line=dict(color="#6f4c1e"), customdata=ChartData['Fdt'] ))  #customdata=customdataStack )) 
+        fig.update_layout( xaxis_title="Date time", yaxis_title="Minutes waiting", legend_title_text='')
+        #fig.update_xaxes(visible=False)
+        fig.update_traces(
+            hovertemplate="<br>".join([
+                #"ColX: %{x}",
+                "%{y} minutes wait",
+                "%{customdata}"
+                # "%{customdata[0]}"
+                ])
+            )
+ 
+        # fig = px.area( ChartData,
+        #             #   x=index,
+        #               y=['time99', 'time95', 'time50']
+        #               )
+        st.plotly_chart( fig, 
+                        theme="streamlit",
+                        use_container_width=True
+                        )   
+
+ 
+    TableDisplayData = ChartData[["Datetime", "Date", "Time Range", "US Max Wait", "Non US Max Wait", "time50", "time95", "time99", "Fdt"]]
+    TableDisplayData.columns = ["Datetime", "Date", "Time Range", "US Max Wait Mins", "Non US Max Wait Mins", "50% All Mins", "95% All Mins", "99% All Mins", "Formatted date"]
+    st.dataframe(TableDisplayData, hide_index=True)
+
+    # AgGrid(ChartData, height=400)
+
+
+
+    # gb = GridOptionsBuilder()   
+
+    # # makes columns resizable, sortable and filterable by default
+    
+    # gb.configure_default_column(
+    #     resizable=True,
+    #     filterable=True,
+    #     sortable=True,
+    #     editable=False,
+    # )
+
+    # #configures state column to have a 80px initial width
+
+    # gb.configure_column(field="Datetime", header_name="Datetime") #, width=80)
+
+
+
+    # go = gb.build()
+
+    # AgGrid(ChartData, gridOptions=go, height=400)    
+
+
+    # fig = go.Figure(data=[go.Table(
+    #     header=dict(values=list(ChartData.columns),
+    #                 fill_color='paleturquoise',
+    #                 align='left'),
+    #     cells=dict(values=[ChartData.Datetime, ChartData.Date, ChartData["Time Range"], ChartData["US Max Wait"], ChartData["Non US Max Wait"]],
+    #                fill_color='lavender',
+    #                align='left')
+    #                )
+    # ])
+
+    # st.plotly_chart(fig, theme="streamlit")
 
 st.write( "(C) 2023 Ian Worthington")    
-st.write( "Data from https://awt.cbp.gov/")  
+st.write( "Discussion and brickbats [here](https://www.flyertalk.com/forum/travel-tools/2134497-us-airport-immigration-waiting-times-connection-planning.html)" )
+# st.write( "Data from [awt.cbt.gov](https://awt.cbp.gov/). (The exact meaning of their data is undefined, but we believe it means the waiting time for passengers on planes that arrive during the given hour range.)")  
+st.write( "Data from [awt.cbt.gov](https://awt.cbp.gov/)")  
